@@ -39,34 +39,42 @@ class RangeMonitor(BaseMonitor):
 
     def __init__(self):
         super().__init__()
-        self.min = torch.inf
-        self.max = -torch.inf
+        self.min = None
+        self.max = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        self.min = min(self.min, torch.min(x).item())
-        self.max = max(self.max, torch.max(x).item())
+        current_min, current_max = torch.aminmax(x)
+        current_min = current_min.detach()
+        current_max = current_max.detach()
+        self.min = current_min if self.min is None else torch.minimum(self.min, current_min)
+        self.max = current_max if self.max is None else torch.maximum(self.max, current_max)
         return x
 
     def monitor_data(self):
-        return (self.min, self.max)
+        return (self.min.item(), self.max.item()) if self.min is not None else None
 
 
 class MinMaxMonitor(BaseMonitor):
 
     def __init__(self):
         super().__init__()
-        self.min = 0.0
-        self.max = 0.0
+        self.min = None
+        self.max = None
         self.num = 0
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        self.min += torch.min(x).item()
-        self.max += torch.max(x).item()
+        # Accumulate as float64 to match the old Python-float summation while
+        # avoiding a device synchronization at every monitored activation.
+        current_min, current_max = torch.aminmax(x)
+        current_min = current_min.detach().double()
+        current_max = current_max.detach().double()
+        self.min = current_min if self.min is None else self.min + current_min
+        self.max = current_max if self.max is None else self.max + current_max
         self.num += 1
         return x
 
     def monitor_data(self):
-        return (self.min / self.num, self.max / self.num) if self.num else None
+        return ((self.min / self.num).item(), (self.max / self.num).item()) if self.num else None
 
 
 def get_monitor_data(model: nn.Module) -> dict[str, Any]:

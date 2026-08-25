@@ -19,6 +19,12 @@ def main():
     parser.add_argument("--path", type=str, default="/hpc/zls/data/imagenet-1k/val")
     parser.add_argument("--weight", type=str, default="weight/vit_small_patch16_224.augreg_in21k_ft_in1k")
     parser.add_argument("--batch_size", type=int, default=50)
+    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--num_shards", type=int, default=1)
+    parser.add_argument("--shard_index", type=int, default=0)
+    parser.add_argument("--monitor_output", type=str)
+    parser.add_argument("--metrics_output", type=str)
+    parser.add_argument("--no_print_model", dest="print_model", action="store_false")
 
     args = parser.parse_args()
 
@@ -27,13 +33,21 @@ def main():
 
     model = timm.create_model(model_name, pretrained=False)
     load_weights(args.weight, model)
-    data_loader = imagenet_loader(args.path, args.weight, args.batch_size)
+    data_loader = imagenet_loader(
+        args.path,
+        args.weight,
+        args.batch_size,
+        args.num_workers,
+        args.num_shards,
+        args.shard_index,
+    )
 
     set_monitor(model, lambda: MinMaxMonitor())
     model.cuda()
     model.eval()
 
-    print(model)
+    if args.print_model:
+        print(model)
 
     top1 = AverageMeter()
     top5 = AverageMeter()
@@ -60,10 +74,29 @@ def main():
 
     print(f"Original {model_name} Top1 Acc={top1.mean:.5f}, Top5 Acc={top5.mean:.5f}")
 
+    output_dir = f"data/{model_name}"
+    os.makedirs(output_dir, exist_ok=True)
+    shard_suffix = "" if args.num_shards == 1 else f".shard-{args.shard_index}-of-{args.num_shards}"
+    monitor_output = args.monitor_output or f"{output_dir}/monitor-100{shard_suffix}.json"
+    metrics_output = args.metrics_output or f"{output_dir}/origin-metrics{shard_suffix}.json"
+
     data = get_monitor_data(model)
-    os.makedirs(f"data/{model_name}/", exist_ok=True)
-    with open(f"data/{model_name}/monitor-100.json", "w") as file:
+    os.makedirs(os.path.dirname(monitor_output) or ".", exist_ok=True)
+    with open(monitor_output, "w") as file:
         json.dump(data, file)
+
+    metrics = {
+        "architecture": model_name,
+        "num_shards": args.num_shards,
+        "shard_index": args.shard_index,
+        "samples": len(data_loader.dataset),
+        "batches": len(data_loader),
+        "top1": top1.mean,
+        "top5": top5.mean,
+    }
+    os.makedirs(os.path.dirname(metrics_output) or ".", exist_ok=True)
+    with open(metrics_output, "w") as file:
+        json.dump(metrics, file, indent=2)
 
 
 if __name__ == "__main__":

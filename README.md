@@ -39,6 +39,10 @@ to install all required packages.
 
 ## Testing
 
+For an end-to-end reproduction record, including the exact environment, dataset checks,
+commands, paper-to-local metric comparison, and known discrepancies, see
+[`docs/REPRODUCTION.md`](docs/REPRODUCTION.md).
+
 ### Weights
 
 Please download the weight from hugging face before you run the code.
@@ -63,4 +67,3 @@ to get the parameters for SNN, and run
 python test/eval_ttfs.py
 ```
 to evaluate it on SNN.
-
