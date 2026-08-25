@@ -43,6 +43,10 @@ For an end-to-end reproduction record, including the exact environment, dataset 
 commands, paper-to-local metric comparison, and known discrepancies, see
 [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md).
 
+For the staged design to migrate TTFSFormer to encoder and causal language tasks,
+including calibration, KV-cache semantics, evaluation gates, and system-level energy
+accounting, see [`docs/LANGUAGE_MIGRATION_PLAN.md`](docs/LANGUAGE_MIGRATION_PLAN.md).
+
 ### Weights
 
 Please download the weight from hugging face before you run the code.
