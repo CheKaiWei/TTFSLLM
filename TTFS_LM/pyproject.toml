@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ttfs-lm"
+version = "0.1.0"
+description = "Minimal Qwen2.5 ANN-to-TTFS reference implementation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.3",
+    "transformers>=5.6,<6",
+    "safetensors>=0.4",
+    "huggingface-hub>=0.24",
+]
+
+[project.scripts]
+ttfs-lm = "ttfs_lm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ttfs_lm*"]
+
+[tool.black]
+line-length = 120

@@ -47,6 +47,9 @@ For the staged design to migrate TTFSFormer to encoder and causal language tasks
 including calibration, KV-cache semantics, evaluation gates, and system-level energy
 accounting, see [`docs/LANGUAGE_MIGRATION_PLAN.md`](docs/LANGUAGE_MIGRATION_PLAN.md).
 
+The first runnable language baseline, using the pinned official Qwen2.5-0.5B weights,
+is in [`TTFS_LM/`](TTFS_LM/README.md).
+
 ### Weights
 
 Please download the weight from hugging face before you run the code.
