@@ -1,0 +1,92 @@
+model:
+  id: Qwen/Qwen2.5-0.5B
+  revision: 060db6499f32faf8b98477b0a26969ef7d8b9987
+  dtype: float32
+  device: cuda
+  local_files_only: true
+
+runtime:
+  context_length: 128
+  batch_size: 4
+  seed: 20260829
+  local_files_only: false
+
+# All ranges are calibrated once on the original MVP corpus. Evaluation datasets
+# never contribute activations to the registry.
+calibration_dataset:
+  name: wikitext2_train_calibration
+  source: huggingface
+  id: Salesforce/wikitext
+  config: wikitext-2-raw-v1
+  revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  split: train
+  text_field: text
+  max_tokens: 100000
+  streaming: false
+
+evaluation_datasets:
+  - name: wikitext103_test
+    source: huggingface
+    id: Salesforce/wikitext
+    config: wikitext-103-raw-v1
+    revision: b08601e04326c79dfdd32d625aee71d232d685c3
+    split: test
+    text_field: text
+    max_tokens: null
+    streaming: false
+
+  - name: penn_treebank_test
+    source: git_text
+    id: https://github.com/wojzaremba/lstm.git
+    config: penn_treebank
+    revision: 76870253cfca069477f06b7056af87f98490b6eb
+    split: test
+    text_field: text
+    path: data/ptb.test.txt
+    max_tokens: null
+    streaming: false
+
+  - name: lambada_openai_test
+    source: huggingface
+    id: EleutherAI/lambada_openai
+    config: default
+    revision: 900124bf3b8235c6daf21033af9948b3f07346c4
+    split: test
+    text_field: text
+    max_tokens: null
+    streaming: false
+
+  # C4 validation has 364K documents. One pinned shard plus a fixed token cap is
+  # sufficient for this first OOD conversion sweep and bounds network/storage use.
+  - name: c4_validation_262k
+    source: http_json
+    id: https://hf-mirror.com/datasets/allenai/c4/resolve/1588ec454efa1a09f29cd18ddd04fe05fc8653a2/en/c4-validation.00000-of-00008.json.gz
+    config: en
+    revision: 1588ec454efa1a09f29cd18ddd04fe05fc8653a2
+    split: validation
+    text_field: text
+    max_tokens: 262420
+    streaming: false
+    file_sha256: 1f25b6af12da84115301d4ee93ea5246c8fea5bb4a2008472794d95b917cc97f
+
+calibration:
+  margin: 1.0
+  decode_batches: 1
+
+ttfs:
+  finite_precision: 4096
+  finite_allow_clipping: true
+  spike_lm_head: false
+
+generation:
+  prompt: Time-to-first-spike language models can
+  max_new_tokens: 8
+
+acceptance:
+  official_local_max_abs: 1.0e-6
+  continuous_ppl_relative: 1.0e-3
+  continuous_top1: 0.999
+  cache_max_abs: 2.0e-4
+  ttfs_cache_extra_abs: 1.0e-6
+
+output_dir: TTFS_LM/artifacts/dataset_sweep

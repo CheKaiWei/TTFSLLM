@@ -126,6 +126,30 @@ The continuous fidelity configuration uses a deliberately conservative train-ran
 zero-clipping contract and is not a tuned finite-precision range policy. The `P=4096` result only verifies that finite
 encoding completes with finite, fully reported outputs; it is not a quality claim.
 
+## Run the cross-corpus sweep
+
+The dataset sweep reuses one WikiText-2 train calibration artifact across complete WikiText-103 test, Penn Treebank
+test, complete LAMBADA OpenAI test, and a pinned 262K-token C4 validation sample. Populate the caches once:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com ttfs-lm dataset-sweep \
+  --config TTFS_LM/configs/dataset_sweep.yaml \
+  --allow-download
+```
+
+Then reproduce without network access:
+
+```bash
+HF_HUB_OFFLINE=1 ttfs-lm dataset-sweep \
+  --config TTFS_LM/configs/dataset_sweep.yaml \
+  --local-files-only
+```
+
+Strict continuous range failures are recorded rather than hidden. A failed corpus is rerun once with explicit clipping
+to quantify the affected elements and quality, after which `P=4096` is still evaluated. Results and interpretation are
+in [`DATASET_SWEEP.md`](DATASET_SWEEP.md); raw artifacts are written under
+`TTFS_LM/artifacts/dataset_sweep/`.
+
 ## Calibrate the official model
 
 The built-in bilingual corpus is only a smoke calibration set. It exercises both prefill and token-by-token decode, but
@@ -201,9 +225,10 @@ TTFS_LM/
 │   ├── modeling_ann.py   # local Qwen2 ANN reference
 │   ├── modeling_ttfs.py  # functional TTFS conversion and cache
 │   ├── workflow.py       # calibration and comparison helpers
-│   ├── data.py           # pinned WikiText-2 loading and deterministic packing
+│   ├── data.py           # pinned Hub/Git/HTTP corpora and deterministic packing
 │   ├── evaluation.py     # causal-LM PPL and model-pair metrics
-│   └── mvp.py            # configured end-to-end MVP runner and artifacts
+│   ├── mvp.py            # configured end-to-end MVP runner and artifacts
+│   └── dataset_sweep.py  # shared-range cross-corpus evaluation
 └── tests/
 ```
 
