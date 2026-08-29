@@ -133,6 +133,25 @@ def command_generate(args: argparse.Namespace) -> None:
     print(tokenizer.decode(generated[0], skip_special_tokens=True))
 
 
+def command_mvp(args: argparse.Namespace) -> None:
+    from .mvp import run_mvp
+
+    result = run_mvp(
+        args.config,
+        output_dir=args.output_dir,
+        device=args.device,
+        local_files_only=args.local_files_only,
+    )
+    summary = {
+        "output_dir": result["output_dir"],
+        "status": result["manifest"]["status"],
+        "acceptance": result["metrics"].get("acceptance", {}),
+    }
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    if not result["metrics"].get("passed", False):
+        raise SystemExit(2)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Minimal Qwen2.5 ANN-to-TTFS reference")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -166,13 +185,24 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--spike-lm-head", action="store_true")
     generate.add_argument("--max-new-tokens", type=int, default=20)
     generate.set_defaults(handler=command_generate)
+
+    mvp = subparsers.add_parser("mvp", help="run the pinned Qwen2.5 + WikiText-2 MVP pipeline")
+    mvp.add_argument("--config", default="TTFS_LM/configs/mvp_wikitext2.yaml")
+    mvp.add_argument("--output-dir", default=None)
+    mvp.add_argument("--device", default=None)
+    local_group = mvp.add_mutually_exclusive_group()
+    local_group.add_argument("--local-files-only", dest="local_files_only", action="store_true")
+    local_group.add_argument("--allow-download", dest="local_files_only", action="store_false")
+    mvp.set_defaults(local_files_only=None)
+    mvp.add_argument("--hf-endpoint", default=None)
+    mvp.set_defaults(handler=command_mvp)
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.hf_endpoint:
+    if getattr(args, "hf_endpoint", None):
         os.environ["HF_ENDPOINT"] = args.hf_endpoint
     args.handler(args)
 

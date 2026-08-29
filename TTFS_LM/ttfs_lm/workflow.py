@@ -34,10 +34,13 @@ def calibrate_ann(
     batches: Iterable[dict[str, torch.Tensor]],
     margin: float = 0.05,
     include_decode: bool = True,
+    decode_batches: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> RangeRegistry:
+    if decode_batches is not None and decode_batches < 0:
+        raise ValueError("decode_batches must be non-negative or None")
     calibrator = MinMaxCalibrator()
-    for batch in batches:
+    for batch_index, batch in enumerate(batches):
         input_ids = batch["input_ids"]
         attention_mask = batch.get("attention_mask")
         model(
@@ -46,7 +49,7 @@ def calibrate_ann(
             use_cache=False,
             observer=calibrator,
         )
-        if include_decode:
+        if include_decode and (decode_batches is None or batch_index < decode_batches):
             cache = None
             for index in range(input_ids.shape[1]):
                 prefix_mask = attention_mask[:, : index + 1] if attention_mask is not None else None

@@ -1,0 +1,43 @@
+model:
+  id: Qwen/Qwen2.5-0.5B
+  revision: 060db6499f32faf8b98477b0a26969ef7d8b9987
+  dtype: float32
+  device: cuda
+  local_files_only: true
+
+dataset:
+  id: Salesforce/wikitext
+  config: wikitext-2-raw-v1
+  revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  calibration_split: train
+  evaluation_split: validation
+  calibration_max_tokens: 100000
+  evaluation_max_tokens: null
+  context_length: 128
+  batch_size: 4
+  seed: 20260828
+  local_files_only: true
+
+calibration:
+  # Ranges use train activations only; validation activations are never added.
+  # This conservative MVP guard band trades finite-precision resolution for zero-clip continuous TTFS.
+  margin: 1.0
+  decode_batches: 1
+
+ttfs:
+  finite_precision: 4096
+  finite_allow_clipping: true
+  spike_lm_head: false
+
+generation:
+  prompt: Time-to-first-spike language models can
+  max_new_tokens: 8
+
+acceptance:
+  official_local_max_abs: 1.0e-6
+  continuous_ppl_relative: 1.0e-3
+  continuous_top1: 0.999
+  cache_max_abs: 2.0e-4
+  ttfs_cache_extra_abs: 1.0e-6
+
+output_dir: TTFS_LM/artifacts/mvp_wikitext2

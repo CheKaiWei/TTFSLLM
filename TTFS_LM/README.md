@@ -93,6 +93,39 @@ The fast test suite proves:
 - continuous TTFS numerical agreement;
 - finite precision execution and strict range violations.
 
+## Run the WikiText-2 MVP
+
+The MVP pins both the official Qwen checkpoint and `Salesforce/wikitext` revisions. It uses at most 100,000 tokens from
+the train split for range calibration, then evaluates the complete validation split with context length 128 and batch
+size 4. Validation data never participates in calibration.
+
+After the model and dataset are cached, run the complete offline workflow from the repository root:
+
+```bash
+HF_HUB_OFFLINE=1 ttfs-lm mvp \
+  --config TTFS_LM/configs/mvp_wikitext2.yaml \
+  --local-files-only
+```
+
+To populate an empty cache, omit `HF_HUB_OFFLINE=1` and `--local-files-only`. The command runs the official and local
+ANN references, train-only calibration, strict continuous TTFS evaluation, a `P=4096` finite-precision smoke run, and
+an eight-token cached generation check. It exits nonzero when a required acceptance check fails.
+
+All numerical gates are explicit under `acceptance` in the YAML. The cache gate allows `2e-4` FP32 max-absolute error
+between full-sequence and token-wise execution, and separately requires TTFS cache error to remain within `1e-6` of the
+ANN cache error.
+
+Results are written to `TTFS_LM/artifacts/mvp_wikitext2/`:
+
+- `ranges.json`: calibrated tensor ranges and calibration provenance;
+- `metrics.json`: PPL, NLL, logits agreement, KL, cache checks, generation, and range telemetry;
+- `run_manifest.json`: resolved config, dataset fingerprints, environment, git revision, status, and acceptance checks;
+- `run.log`: timestamped JSONL stage progress.
+
+The continuous fidelity configuration uses a deliberately conservative train-range guard band. This preserves a strict
+zero-clipping contract and is not a tuned finite-precision range policy. The `P=4096` result only verifies that finite
+encoding completes with finite, fully reported outputs; it is not a quality claim.
+
 ## Calibrate the official model
 
 The built-in bilingual corpus is only a smoke calibration set. It exercises both prefill and token-by-token decode, but
@@ -161,13 +194,16 @@ TTFS_LM/
 ├── ttfs_lm/
 │   ├── calibration.py    # RangeSpec, registry, mask-aware collection
 │   ├── checkpoint.py     # pinned official weights and strict state-dict load
-│   ├── cli.py            # calibrate, compare, generate
+│   ├── cli.py            # calibrate, compare, generate, mvp
 │   ├── config.py         # official architecture and TTFS configuration
 │   ├── conversion.py     # checked ANN-to-TTFS entry point
 │   ├── generation.py     # minimal cached greedy decoding
 │   ├── modeling_ann.py   # local Qwen2 ANN reference
 │   ├── modeling_ttfs.py  # functional TTFS conversion and cache
-│   └── workflow.py       # calibration and comparison helpers
+│   ├── workflow.py       # calibration and comparison helpers
+│   ├── data.py           # pinned WikiText-2 loading and deterministic packing
+│   ├── evaluation.py     # causal-LM PPL and model-pair metrics
+│   └── mvp.py            # configured end-to-end MVP runner and artifacts
 └── tests/
 ```
 
