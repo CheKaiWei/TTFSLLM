@@ -4,6 +4,8 @@ Run date: 2026-08-29
 
 This experiment keeps the MVP conversion fixed: Qwen2.5-0.5B, context 128, hybrid LM head, and one set of ranges
 calibrated from 100,000 WikiText-2 train tokens with margin 1.0. No evaluation activation is added to the registry.
+Dataset provenance, licenses, materialized hashes, and packing semantics are documented in
+[`DATASETS.md`](DATASETS.md).
 
 ## Corpora
 

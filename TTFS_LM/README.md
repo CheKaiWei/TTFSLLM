@@ -147,7 +147,8 @@ HF_HUB_OFFLINE=1 ttfs-lm dataset-sweep \
 
 Strict continuous range failures are recorded rather than hidden. A failed corpus is rerun once with explicit clipping
 to quantify the affected elements and quality, after which `P=4096` is still evaluated. Results and interpretation are
-in [`DATASET_SWEEP.md`](DATASET_SWEEP.md); raw artifacts are written under
+in [`DATASET_SWEEP.md`](DATASET_SWEEP.md), while source selection, licenses, packing, and hashes are documented in
+[`DATASETS.md`](DATASETS.md). Raw artifacts are written under
 `TTFS_LM/artifacts/dataset_sweep/`.
 
 ## Calibrate the official model
