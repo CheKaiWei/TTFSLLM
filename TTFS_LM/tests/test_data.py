@@ -1,8 +1,11 @@
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 import torch
 
-from ttfs_lm.data import pack_texts
+from ttfs_lm.data import CorpusSource, load_corpus, pack_texts
 
 
 class DummyTokenizer:
@@ -47,6 +50,85 @@ class DataTest(unittest.TestCase):
         second = list(corpus.batches(1, "cpu"))
         self.assertEqual(len(first), len(second))
         torch.testing.assert_close(first[0]["input_ids"], second[0]["input_ids"])
+
+    def test_git_text_source_is_pinned_and_hashed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "source"
+            repository.mkdir()
+            subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+            (repository / "test.txt").write_text("a b\nc d\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repository), "add", "test.txt"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "-c",
+                    "user.name=TTFS Test",
+                    "-c",
+                    "user.email=ttfs@example.invalid",
+                    "commit",
+                    "-m",
+                    "fixture",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            revision = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            source = CorpusSource(
+                name="fixture",
+                source="git_text",
+                id=str(repository),
+                config=None,
+                revision=revision,
+                split="test",
+                text_field="text",
+                path="test.txt",
+                max_tokens=None,
+            )
+            corpus = load_corpus(
+                source,
+                self.tokenizer,
+                context_length=4,
+                source_cache_dir=root / "cache",
+            )
+            self.assertEqual(corpus.metadata["dataset_revision"], revision)
+            self.assertEqual(corpus.metadata["source_rows"], 2)
+            self.assertEqual(corpus.metadata["source_rows_scanned"], 2)
+            self.assertEqual(len(corpus.metadata["source_file_sha256"]), 64)
+
+    def test_invalid_corpus_source_is_rejected(self):
+        source = CorpusSource(
+            name="invalid",
+            source="unknown",
+            id="example",
+            revision="revision",
+            split="test",
+            text_field="text",
+            max_tokens=100,
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported corpus source"):
+            source.validate()
+
+    def test_invalid_source_file_digest_is_rejected(self):
+        source = CorpusSource(
+            name="invalid",
+            source="http_json",
+            id="https://example.invalid/data.json",
+            revision="revision",
+            split="test",
+            text_field="text",
+            max_tokens=100,
+            file_sha256="short",
+        )
+        with self.assertRaisesRegex(ValueError, "64-character"):
+            source.validate()
 
 
 if __name__ == "__main__":

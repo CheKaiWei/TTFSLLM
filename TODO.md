@@ -1,16 +1,33 @@
 # TTFS-LLM Development TODO
 
-> 更新日期：2026-08-28
+> 更新日期：2026-08-29
 > 当前基线：`535a869 Add Qwen2.5 ANN-to-TTFS baseline`
-> 当前阶段：MVP-0 最小闭环已通过；有限精度质量、正式扩展评测和事件后端尚未完成
+> 当前阶段：MVP-0 与首轮跨语料 sweep 已完成；有限精度质量、下游任务和事件后端尚未完成
 
 ## 当前判断
 
 - 功能仿真完成度：较高，核心 Qwen 算子、TTFS 表示、mask 和 cache 已形成闭环。
-- 研究完成度：约 30%，已有最小 PPL 基线，但仍缺少多数据集、下游任务、有限精度可用结果和充分消融。
+- 研究完成度：约 35%，已有四个额外语料的 PPL/范围结果，但仍缺少下游任务、有限精度可用结果和充分消融。
 - 系统完成度：不足 10%，当前仍是 decode-compute-encode 功能仿真器，没有事件原生能效证据。
 - 当前最小闭环：官方 Qwen2.5-0.5B + WikiText-2 + TTFSFormer 转换已跑通。
-- 下一优先级：定位 `P=4096` 的误差放大和范围漂移，建立真正可用的有限精度方案。
+- 下一优先级：处理第 21-23 层 norm/residual 极少数 OOD outlier，并定位 `P=4096` 的逐层误差放大。
+
+## 2026-08-29 跨语料 sweep
+
+- [x] 创建独立 worktree `TTFSFormer-dataset-sweep` 和分支 `exp/dataset-sweep`。
+- [x] 固定 WikiText-103 test、PTB test、LAMBADA OpenAI test 和 C4 validation sample revision。
+- [x] 固定所有语料的 token 数、token SHA、source SHA/fingerprint 与 packing 规则。
+- [x] 只使用 WikiText-2 train 100K tokens 生成一份共享 ranges，禁止 OOD evaluation 参与校准。
+- [x] 四个语料全部运行 strict continuous、显式 clipping diagnostic 和 `P=4096`。
+- [x] 四个 strict continuous 均记录首个 range violation，未静默放宽范围。
+- [x] 四个 clipped continuous diagnostic 的 PPL 相对变化均小于 `2.2e-5`、top-1 均高于 `99.995%`。
+- [x] `P=4096` 四个语料均完整运行，但 PPL 为 `1e106-1e107`、top-1 仅约 `0.14%-0.18%`。
+- [x] 保存 `ranges.json`、`metrics.json`、`summary.json`、`sweep_manifest.json` 和独立运行日志。
+- [x] 将实验边界、实测表格与结论写入 `TTFS_LM/DATASET_SWEEP.md`。
+
+关键结论：strict zero-clipping 合同在 4/4 OOD 语料失败，但每个语料仅裁剪 2-13 个 continuous 编码元素；
+主要异常集中在第 22 层 RMSNorm square。Continuous 表示整体仍高保真，当前范围估计缺少 outlier 鲁棒性；
+uniform `P=4096` 则是约 0.87%-0.90% 的大规模级联裁剪，质量完全不可用。
 
 ## 已完成的最高优先级：MVP-0 最小闭环
 
@@ -139,8 +156,8 @@ MVP-0 已通过；后续按下方阶段门推进，优先解决有限精度误�
 - [ ] 建立 5M-token MVP 校准集。
 - [ ] 建立 20M-token final 校准集。
 - [ ] 覆盖中英文、代码、数学、百科、新闻和长文本。
-- [ ] 固定文档打包、EOS、padding、截断和随机种子。
-- [ ] 分离 calibration、in-domain validation 和 OOD validation。
+- [x] 固定文档打包、EOS、padding、截断和随机种子。
+- [x] 分离 calibration、in-domain validation 和 OOD validation。
 - [ ] 检查并阻止校准数据与测试数据泄漏。
 - [ ] 保存数据集 revision、样本 ID、tokenizer 和 token 序列哈希。
 - [ ] 分离 prefill 和 decode 激活统计。
@@ -177,8 +194,8 @@ MVP-0 已通过；后续按下方阶段门推进，优先解决有限精度误�
 
 ## P3：正式质量评测
 
-- [ ] 评测 WikiText-103 token NLL 和 PPL。
-- [ ] 评测一份更广分布语料的 NLL 和 PPL。
+- [x] 评测 WikiText-103 token NLL 和 PPL。
+- [x] 评测一份更广分布语料的 NLL 和 PPL。
 - [ ] 报告 teacher-forcing top-1/top-5 agreement。
 - [ ] 报告 logits KL、hidden cosine 和 NRMSE。
 - [ ] 接入并固定 `lm-evaluation-harness` revision。

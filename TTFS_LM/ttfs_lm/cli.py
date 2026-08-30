@@ -152,6 +152,20 @@ def command_mvp(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
+def command_dataset_sweep(args: argparse.Namespace) -> None:
+    from .dataset_sweep import format_sweep_summary, run_dataset_sweep
+
+    result = run_dataset_sweep(
+        args.config,
+        output_dir=args.output_dir,
+        device=args.device,
+        local_files_only=args.local_files_only,
+    )
+    print(format_sweep_summary(result))
+    if not result["metrics"].get("summary", {}).get("execution_completed", False):
+        raise SystemExit(2)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Minimal Qwen2.5 ANN-to-TTFS reference")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -196,6 +210,19 @@ def build_parser() -> argparse.ArgumentParser:
     mvp.set_defaults(local_files_only=None)
     mvp.add_argument("--hf-endpoint", default=None)
     mvp.set_defaults(handler=command_mvp)
+
+    sweep = subparsers.add_parser(
+        "dataset-sweep", help="evaluate shared TTFS ranges across pinned language-model corpora"
+    )
+    sweep.add_argument("--config", default="TTFS_LM/configs/dataset_sweep.yaml")
+    sweep.add_argument("--output-dir", default=None)
+    sweep.add_argument("--device", default=None)
+    sweep_local_group = sweep.add_mutually_exclusive_group()
+    sweep_local_group.add_argument("--local-files-only", dest="local_files_only", action="store_true")
+    sweep_local_group.add_argument("--allow-download", dest="local_files_only", action="store_false")
+    sweep.set_defaults(local_files_only=None)
+    sweep.add_argument("--hf-endpoint", default=None)
+    sweep.set_defaults(handler=command_dataset_sweep)
     return parser
 
 

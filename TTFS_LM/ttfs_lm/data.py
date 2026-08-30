@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 import torch
@@ -10,6 +13,46 @@ import torch
 DEFAULT_DATASET_ID = "Salesforce/wikitext"
 DEFAULT_DATASET_CONFIG = "wikitext-2-raw-v1"
 DEFAULT_DATASET_REVISION = "b08601e04326c79dfdd32d625aee71d232d685c3"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class CorpusSource:
+    name: str
+    source: str
+    id: str
+    revision: str
+    split: str
+    text_field: str
+    max_tokens: int | None
+    config: str | None = None
+    streaming: bool = False
+    data_files: dict[str, str | list[str]] | None = None
+    path: str | None = None
+    file_sha256: str | None = None
+
+    def validate(self) -> None:
+        if not self.name or not self.id or not self.revision or not self.split or not self.text_field:
+            raise ValueError("Corpus source identity, revision, split, and text_field must be non-empty")
+        if self.source not in {"huggingface", "git_text", "http_json"}:
+            raise ValueError(f"Unsupported corpus source {self.source!r}")
+        if self.max_tokens is not None and self.max_tokens < 2:
+            raise ValueError("Corpus max_tokens must be at least two or null")
+        if self.source == "git_text" and not self.path:
+            raise ValueError("git_text corpus sources require path")
+        if self.source == "huggingface" and self.path is not None:
+            raise ValueError("Hugging Face corpus sources do not use path")
+        if self.source == "http_json" and self.path is not None:
+            raise ValueError("HTTP JSON corpus sources do not use path")
+        if self.file_sha256 is not None and len(self.file_sha256) != 64:
+            raise ValueError("file_sha256 must be a 64-character digest or null")
 
 
 @dataclass
@@ -75,9 +118,11 @@ def pack_texts(
     tokens: list[int] = []
     source_hash = hashlib.sha256()
     nonempty_rows = 0
+    source_rows_scanned = 0
     source_characters = 0
     truncated = False
     for row_index, raw_text in enumerate(texts):
+        source_rows_scanned = row_index + 1
         text = str(raw_text).strip()
         if not text:
             continue
@@ -133,6 +178,7 @@ def pack_texts(
             ),
             "sequence_count": input_ids.shape[0],
             "nonempty_rows": nonempty_rows,
+            "source_rows_scanned": source_rows_scanned,
             "source_characters": source_characters,
             "truncated": truncated,
             "token_sha256": token_hash,
@@ -145,6 +191,179 @@ def pack_texts(
         }
     )
     return PackedCorpus(input_ids, attention_mask, metadata)
+
+
+def _git_texts(
+    source: CorpusSource,
+    cache_dir: str | Path,
+    local_files_only: bool,
+) -> tuple[list[str], dict[str, Any]]:
+    cache_root = Path(cache_dir)
+    repository_key = hashlib.sha256(source.id.encode("utf-8")).hexdigest()[:16]
+    repository = cache_root / repository_key
+    if not repository.exists():
+        if local_files_only:
+            raise FileNotFoundError(f"Git corpus cache is missing: {repository}")
+        cache_root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--filter=blob:none", "--no-checkout", source.id, str(repository)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    try:
+        resolved_revision = git("rev-parse", f"{source.revision}^{{commit}}").stdout.strip()
+    except subprocess.CalledProcessError:
+        if local_files_only:
+            raise FileNotFoundError(
+                f"Git corpus revision {source.revision} is not cached in {repository}"
+            ) from None
+        git("fetch", "--depth=1", "origin", source.revision)
+        resolved_revision = git("rev-parse", "FETCH_HEAD^{commit}").stdout.strip()
+    if resolved_revision != source.revision:
+        raise ValueError(
+            f"Git corpus resolved to {resolved_revision}, expected pinned revision {source.revision}"
+        )
+
+    payload = git("show", f"{resolved_revision}:{source.path}").stdout
+    payload_bytes = payload.encode("utf-8")
+    texts = payload.splitlines()
+    return texts, {
+        "dataset_id": source.id,
+        "dataset_config": source.config,
+        "dataset_revision": resolved_revision,
+        "split": source.split,
+        "dataset_fingerprint": hashlib.sha256(payload_bytes).hexdigest(),
+        "source_rows": len(texts),
+        "source_type": source.source,
+        "source_path": source.path,
+        "source_file_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+    }
+
+
+def _http_corpus_file(
+    source: CorpusSource,
+    cache_dir: str | Path,
+    local_files_only: bool,
+) -> tuple[Path, str]:
+    cache_root = Path(cache_dir) / "http"
+    cache_key = source.file_sha256 or hashlib.sha256(source.id.encode("utf-8")).hexdigest()
+    suffix = "".join(Path(source.id).suffixes) or ".data"
+    cached_file = cache_root / f"{cache_key}{suffix}"
+    if not cached_file.exists():
+        if local_files_only:
+            raise FileNotFoundError(f"HTTP corpus cache is missing: {cached_file}")
+        from datasets import DownloadConfig, DownloadManager
+
+        download_config = DownloadConfig(cache_dir=str(cache_root / "datasets-downloads"))
+        downloaded_path = Path(
+            DownloadManager(download_config=download_config).download(source.id)
+        )
+        cache_root.mkdir(parents=True, exist_ok=True)
+        temporary = cached_file.with_suffix(cached_file.suffix + ".tmp")
+        shutil.copyfile(downloaded_path, temporary)
+        temporary.replace(cached_file)
+
+    digest = _sha256_file(cached_file)
+    if source.file_sha256 is not None and digest != source.file_sha256:
+        raise ValueError(
+            f"HTTP corpus SHA256 mismatch for {source.name}: {digest} != {source.file_sha256}"
+        )
+    return cached_file, digest
+
+
+def load_corpus(
+    source: CorpusSource,
+    tokenizer,
+    context_length: int,
+    local_files_only: bool = False,
+    source_cache_dir: str | Path = "TTFS_LM/artifacts/dataset_sources",
+) -> PackedCorpus:
+    source.validate()
+    if source.source == "git_text":
+        texts, metadata = _git_texts(source, source_cache_dir, local_files_only)
+    elif source.source == "http_json":
+        from datasets import DownloadConfig, load_dataset
+
+        downloaded_path, digest = _http_corpus_file(
+            source, source_cache_dir, local_files_only
+        )
+        download_config = DownloadConfig(local_files_only=True)
+        dataset = load_dataset(
+            "json",
+            data_files={source.split: str(downloaded_path)},
+            split=source.split,
+            download_config=download_config,
+        )
+        if source.text_field not in dataset.column_names:
+            raise ValueError(
+                f"Corpus {source.name!r} does not contain text field {source.text_field!r}: "
+                f"{dataset.column_names}"
+            )
+        metadata = {
+            "dataset_id": source.id,
+            "dataset_config": source.config,
+            "dataset_revision": source.revision,
+            "split": source.split,
+            "dataset_fingerprint": getattr(dataset, "_fingerprint", None),
+            "source_rows": len(dataset),
+            "source_type": source.source,
+            "source_file_sha256": digest,
+        }
+        texts = (row[source.text_field] for row in dataset)
+    else:
+        from datasets import DownloadConfig, load_dataset
+
+        download_config = DownloadConfig(local_files_only=local_files_only)
+        dataset = load_dataset(
+            source.id,
+            source.config,
+            split=source.split,
+            revision=source.revision,
+            streaming=source.streaming,
+            data_files=source.data_files,
+            download_config=download_config,
+        )
+        if source.text_field not in dataset.column_names:
+            raise ValueError(
+                f"Corpus {source.name!r} does not contain text field {source.text_field!r}: "
+                f"{dataset.column_names}"
+            )
+        try:
+            source_rows = len(dataset)
+        except TypeError:
+            source_rows = None
+        metadata = {
+            "dataset_id": source.id,
+            "dataset_config": source.config,
+            "dataset_revision": source.revision,
+            "split": source.split,
+            "dataset_fingerprint": getattr(dataset, "_fingerprint", None),
+            "source_rows": source_rows,
+            "source_type": source.source,
+            "streaming": source.streaming,
+            "data_files": source.data_files,
+        }
+        texts = (row[source.text_field] for row in dataset)
+
+    metadata["corpus_name"] = source.name
+    metadata["text_field"] = source.text_field
+    return pack_texts(
+        texts,
+        tokenizer,
+        context_length,
+        source.max_tokens,
+        metadata,
+    )
 
 
 def load_wikitext2_corpora(
@@ -161,39 +380,34 @@ def load_wikitext2_corpora(
 ) -> tuple[PackedCorpus, PackedCorpus]:
     if calibration_split == evaluation_split:
         raise ValueError("Calibration and evaluation splits must be different")
-    from datasets import DownloadConfig, load_dataset
-
-    download_config = DownloadConfig(local_files_only=local_files_only)
-    calibration_data, evaluation_data = load_dataset(
-        dataset_id,
-        dataset_config,
-        split=[calibration_split, evaluation_split],
-        revision=revision,
-        download_config=download_config,
-    )
-
-    def metadata(split: str, dataset) -> dict[str, Any]:
-        return {
-            "dataset_id": dataset_id,
-            "dataset_config": dataset_config,
-            "dataset_revision": revision,
-            "split": split,
-            "dataset_fingerprint": dataset._fingerprint,
-            "source_rows": len(dataset),
-        }
-
-    calibration = pack_texts(
-        calibration_data["text"],
+    calibration = load_corpus(
+        CorpusSource(
+            name=f"{dataset_config}_{calibration_split}",
+            source="huggingface",
+            id=dataset_id,
+            config=dataset_config,
+            revision=revision,
+            split=calibration_split,
+            text_field="text",
+            max_tokens=calibration_max_tokens,
+        ),
         tokenizer,
         context_length,
-        calibration_max_tokens,
-        metadata(calibration_split, calibration_data),
+        local_files_only,
     )
-    evaluation = pack_texts(
-        evaluation_data["text"],
+    evaluation = load_corpus(
+        CorpusSource(
+            name=f"{dataset_config}_{evaluation_split}",
+            source="huggingface",
+            id=dataset_id,
+            config=dataset_config,
+            revision=revision,
+            split=evaluation_split,
+            text_field="text",
+            max_tokens=evaluation_max_tokens,
+        ),
         tokenizer,
         context_length,
-        evaluation_max_tokens,
-        metadata(evaluation_split, evaluation_data),
+        local_files_only,
     )
     return calibration, evaluation
