@@ -5,6 +5,8 @@
 > 文档目的：解释当前代码做了什么、为什么 Continuous 模式近似等价、哪些部分具有研究价值，以及哪些部分仍只是功能仿真。
 
 对应的 adversarial review 与修正路线见 [`TTFS_MVP_REVIEW_AND_REVISION.md`](TTFS_MVP_REVIEW_AND_REVISION.md)。
+MVP 与跨语料实验的系统性结果总结见
+[`QWEN2_5_TTFS_EXPERIMENT_RESULTS.md`](QWEN2_5_TTFS_EXPERIMENT_RESULTS.md)。
 
 ## 1. 先给结论
 

@@ -5,6 +5,8 @@
 > 目标：提前暴露拒稿风险，并把每条质疑转换成可执行、可验收的修正任务。
 
 方法细节与逐模块转换见 [`CONTINUOUS_TTFS_METHOD.md`](CONTINUOUS_TTFS_METHOD.md)。
+MVP 与跨语料实验的完整证据、失败分析和 claim-evidence map 见
+[`QWEN2_5_TTFS_EXPERIMENT_RESULTS.md`](QWEN2_5_TTFS_EXPERIMENT_RESULTS.md)。
 
 ## 1. Reviewer 总体判断
 
