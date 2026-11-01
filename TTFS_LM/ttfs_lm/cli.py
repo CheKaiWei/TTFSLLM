@@ -166,6 +166,27 @@ def command_dataset_sweep(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
+def command_gpqa_diamond(args: argparse.Namespace) -> None:
+    from .reasoning_eval import run_gpqa
+
+    result = run_gpqa(
+        model_id=args.model_id,
+        revision=args.revision,
+        device=args.device,
+        dtype=args.dtype,
+        ranges_path=args.ranges,
+        precision=args.precision,
+        allow_clipping=args.allow_clipping,
+        local_files_only=args.local_files_only,
+        seed=args.seed,
+        max_questions=args.max_questions,
+        output=args.output,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if any(mode.get("status") == "failed" for mode in result["modes"].values()):
+        raise SystemExit(2)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Minimal Qwen2.5 ANN-to-TTFS reference")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -223,6 +244,19 @@ def build_parser() -> argparse.ArgumentParser:
     sweep.set_defaults(local_files_only=None)
     sweep.add_argument("--hf-endpoint", default=None)
     sweep.set_defaults(handler=command_dataset_sweep)
+
+    gpqa = subparsers.add_parser(
+        "gpqa-diamond",
+        help="evaluate GPQA-Diamond with ANN, Continuous TTFS, and finite TTFS choice scoring",
+    )
+    _common_model_arguments(gpqa)
+    gpqa.add_argument("--ranges", required=False)
+    gpqa.add_argument("--precision", type=int, default=4096)
+    gpqa.add_argument("--allow-clipping", action="store_true")
+    gpqa.add_argument("--seed", type=int, default=20260913)
+    gpqa.add_argument("--max-questions", type=int, default=None)
+    gpqa.add_argument("--output", default=None)
+    gpqa.set_defaults(handler=command_gpqa_diamond)
     return parser
 
 

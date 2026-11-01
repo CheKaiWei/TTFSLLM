@@ -16,6 +16,7 @@ import torch
 import yaml
 
 from .checkpoint import load_official_pair, load_tokenizer
+from .calibration import RangeRegistry
 from .config import TTFSConfig
 from .conversion import convert_ann_to_ttfs
 from .data import CorpusSource, PackedCorpus, load_corpus
@@ -45,6 +46,9 @@ class SweepRuntimeConfig:
     batch_size: int
     seed: int
     local_files_only: bool
+    calibration_batch_size: int | None = None
+    evaluation_batch_size: int | None = None
+    compute_kl: bool = True
 
 
 @dataclass
@@ -58,10 +62,15 @@ class DatasetSweepConfig:
     generation: GenerationMVPConfig
     acceptance: AcceptanceMVPConfig
     output_dir: str
+    ranges_path: str | None = None
 
     def validate(self) -> None:
         if self.runtime.context_length < 2 or self.runtime.batch_size <= 0:
             raise ValueError("context_length must be >=2 and batch_size must be positive")
+        if self.runtime.calibration_batch_size is not None and self.runtime.calibration_batch_size <= 0:
+            raise ValueError("calibration_batch_size must be positive or null")
+        if self.runtime.evaluation_batch_size is not None and self.runtime.evaluation_batch_size <= 0:
+            raise ValueError("evaluation_batch_size must be positive or null")
         self.calibration_dataset.validate()
         if self.calibration_dataset.max_tokens is None:
             raise ValueError("Sweep calibration dataset requires a finite max_tokens")
@@ -108,6 +117,7 @@ def load_dataset_sweep_config(path: str | Path) -> tuple[DatasetSweepConfig, str
             generation=GenerationMVPConfig(**payload["generation"]),
             acceptance=AcceptanceMVPConfig(**payload["acceptance"]),
             output_dir=payload["output_dir"],
+            ranges_path=payload.get("ranges_path"),
         )
     except (KeyError, TypeError) as exc:
         raise ValueError(f"Invalid dataset sweep config structure: {exc}") from exc
@@ -141,6 +151,7 @@ def _evaluate_dataset(
     config: DatasetSweepConfig,
     logger: RunLogger,
 ) -> dict[str, Any]:
+    evaluation_batch_size = config.runtime.evaluation_batch_size or config.runtime.batch_size
     result: dict[str, Any] = {"source": asdict(source), "data": corpus.metadata}
     continuous.codec.reset_telemetry()
     try:
@@ -149,9 +160,10 @@ def _evaluate_dataset(
                 ann,
                 continuous,
                 corpus,
-                config.runtime.batch_size,
+                evaluation_batch_size,
                 config.model.device,
                 _progress(logger, f"{source.name}-continuous"),
+                config.runtime.compute_kl,
             )
         )
         strict_telemetry = _telemetry(continuous)
@@ -176,9 +188,10 @@ def _evaluate_dataset(
                 ann,
                 continuous_diagnostic,
                 corpus,
-                config.runtime.batch_size,
+                evaluation_batch_size,
                 config.model.device,
                 _progress(logger, f"{source.name}-continuous-diagnostic"),
+                config.runtime.compute_kl,
             )
         )
         result["continuous_clipped_diagnostic"] = {
@@ -200,9 +213,10 @@ def _evaluate_dataset(
                 ann,
                 finite,
                 corpus,
-                config.runtime.batch_size,
+                evaluation_batch_size,
                 config.model.device,
                 _progress(logger, f"{source.name}-finite"),
+                config.runtime.compute_kl,
             )
         )
         result["finite"] = {"status": "completed", **finite_metrics}
@@ -423,9 +437,10 @@ def run_dataset_sweep(
             pair.reference,
             pair.ann,
             calibration_corpus,
-            config.runtime.batch_size,
+            config.runtime.evaluation_batch_size or config.runtime.batch_size,
             config.model.device,
             _progress(logger, "evaluate-ann"),
+            config.runtime.compute_kl,
         )
         del pair.reference
         gc.collect()
@@ -444,16 +459,23 @@ def run_dataset_sweep(
             "config_sha256": config_sha256,
             "git_commit": manifest["git"]["commit"],
         }
-        logger.log("calibrate", "collecting shared ranges from calibration corpus")
-        registry = calibrate_ann(
-            pair.ann,
-            calibration_corpus.batches(config.runtime.batch_size, config.model.device),
-            margin=config.calibration.margin,
-            include_decode=config.calibration.decode_batches > 0,
-            decode_batches=config.calibration.decode_batches,
-            metadata=range_metadata,
-        )
-        registry.save(output / "ranges.json")
+        if config.ranges_path is not None:
+            logger.log("calibrate", f"loading precomputed ranges from {config.ranges_path}")
+            registry = RangeRegistry.load(config.ranges_path)
+        else:
+            logger.log("calibrate", "collecting shared ranges from calibration corpus")
+            registry = calibrate_ann(
+                pair.ann,
+                calibration_corpus.batches(
+                    config.runtime.calibration_batch_size or config.runtime.batch_size,
+                    config.model.device,
+                ),
+                margin=config.calibration.margin,
+                include_decode=config.calibration.decode_batches > 0,
+                decode_batches=config.calibration.decode_batches,
+                metadata=range_metadata,
+            )
+            registry.save(output / "ranges.json")
 
         continuous = convert_ann_to_ttfs(
             pair.ann,
