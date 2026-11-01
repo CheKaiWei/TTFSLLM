@@ -1,7 +1,8 @@
 # TTFS-LM: minimal Qwen2.5 ANN-to-TTFS baseline
 
-This directory is the language-model development baseline described in
-[`docs/LANGUAGE_MIGRATION_PLAN.md`](../docs/LANGUAGE_MIGRATION_PLAN.md). It implements a local Qwen2 decoder, loads the
+This directory is the language-model development baseline for moving TTFSFormer to causal
+language models. (The staged design note that motivated it is kept with the research notes, outside this repository;
+see the top-level `README.md`.) It implements a local Qwen2 decoder, loads the
 official weights without renaming or approximating parameters, calibrates activation ranges, and converts the model to a
 functional time-to-first-spike simulator.
 
