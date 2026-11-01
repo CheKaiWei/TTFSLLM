@@ -61,11 +61,13 @@ def codebook(query: torch.Tensor, key: torch.Tensor, pct: float):
     return lo.view(1, H, 1, 1), span.view(1, H, 1, 1)
 
 
-def to_code(x: torch.Tensor, lo: torch.Tensor, span: torch.Tensor, levels: int):
-    """返回 (码, 饱和度)，码在 [0, levels] 的整数网格上。"""
-    raw = (x - lo) / span * levels
-    z = torch.round(raw).clamp_(0.0, float(levels))
-    sat = float(((raw < -0.5) | (raw > levels + 0.5)).float().mean())
+def to_code(x: torch.Tensor, lo: torch.Tensor, span: torch.Tensor, levels):
+    """返回 (码, 饱和度)。levels 可以是 int 或 (1,H,1,1) 张量（逐 head 不同位宽）。"""
+    lv = levels if torch.is_tensor(levels) else torch.tensor(float(levels), device=x.device)
+    raw = (x - lo) / span * lv
+    z = torch.clamp(torch.round(raw), min=0.0)
+    z = torch.minimum(z, lv)
+    sat = float(((raw < -0.5) | (raw > lv + 0.5)).float().mean())
     return z, sat
 
 
@@ -142,7 +144,7 @@ class Probe:
     """一个变体一次前向；前向内直接与 native 对比，不跨调用存中间量。"""
 
     def __init__(self, variant: str, levels: int, pct: float | None = None, taus=(), sink_n: int = 4,
-                 skip: frozenset[int] = frozenset(), norm_step: float = 1.0):
+                 skip: frozenset[int] = frozenset(), norm_step: float = 1.0, levels_map=None):
         self.variant = variant
         self.levels = levels
         self.pct = pct
@@ -150,6 +152,7 @@ class Probe:
         self.sink_n = sink_n
         self.skip = skip
         self.norm_step = norm_step
+        self.levels_map = levels_map or {}
         self.stats: dict[int, dict] = {}
         self.orig = None
 
@@ -220,10 +223,11 @@ class Probe:
             nk = (key * key).sum(-1)[:, :, None, :]
             probs = M.masked_softmax(0.5 * s * (nk - dist2(query, key)), valid)
         elif self.variant.startswith("d2_T") or self.variant == "dot_q":
+            lv = float(self.levels_map.get(layer, self.levels))
             lo, span = codebook(query, key, self.pct)
-            zq, sat_q = to_code(query, lo, span, self.levels)
-            zk, sat_k = to_code(key, lo, span, self.levels)
-            step = (span / self.levels).expand(-1, H, 1, 1)                     # 每码对应的值域宽度
+            zq, sat_q = to_code(query, lo, span, lv)
+            zk, sat_k = to_code(key, lo, span, lv)
+            step = (span / lv).expand(-1, H, 1, 1)                     # 每码对应的值域宽度
             qd, kd = lo + zq * step, lo + zk * step                             # 解码（硬件只有码字）
             extra = {
                 "sat": 0.5 * (sat_q + sat_k),
@@ -282,9 +286,10 @@ def load_ids(tok, target_tokens: int):
 
 
 def run(model, ids, variant, seq_len, batches, levels, pct, taus, device, skip=frozenset(),
-        norm_step=1.0):
+        norm_step=1.0, levels_map=None):
     total, n = 0.0, 0
-    with Probe(variant, levels, pct, taus, skip=skip, norm_step=norm_step) as probe, torch.no_grad():
+    with Probe(variant, levels, pct, taus, skip=skip, norm_step=norm_step,
+               levels_map=levels_map) as probe, torch.no_grad():
         for b in range(batches):
             chunk = ids[b * seq_len : (b + 1) * seq_len].unsqueeze(0).to(device)
             out = model(input_ids=chunk, labels=chunk)
@@ -329,6 +334,7 @@ def main() -> None:
     ap.add_argument("--norm-steps", type=float, nargs="+", default=[1.0],
                     help="2^k 归一的指数量化步长；1.0=Lapis 原版")
     ap.add_argument("--taus", default="10", help="L1 变体的温度；多个用逗号分隔")
+    ap.add_argument("--levels-map", default="", help='逐层位宽，如 "0:1023,1:255"，其余层用 --levels')
     ap.add_argument("--output", default="probe_lapswap.json")
     args = ap.parse_args()
 
@@ -340,6 +346,11 @@ def main() -> None:
 
     skip = frozenset(int(x) for x in args.skip_layers.split(",") if x.strip() != "")
     taus = tuple(float(t) for t in args.taus.split(","))
+    levels_map = {}
+    for item in args.levels_map.split(","):
+        if ":" in item:
+            k, v = item.split(":")
+            levels_map[int(k)] = float(v)
     print("skip_layers", sorted(skip), flush=True)
     result = {"seq_len": args.seq_len, "batches": args.batches, "skip_layers": sorted(skip), "runs": {}}
     nll_native, _ = run(model, ids, "native", args.seq_len, args.batches, 0, None, (), device)
@@ -354,8 +365,9 @@ def main() -> None:
                 if variant == "native":
                     continue
                 nll, stats = run(model, ids, variant, args.seq_len, args.batches, levels, pct, taus,
-                                 device, skip, step)
-                key = f"{variant}@T{levels}@p{'mm' if pct is None else pct}@s{len(skip)}@n{step}"
+                                 device, skip, step, levels_map)
+                key = (f"{variant}@T{levels}@p{'mm' if pct is None else pct}@s{len(skip)}@n{step}"
+                       + (f"@L{len(levels_map)}" if levels_map else ""))
                 ppl = math.exp(nll)
                 result["runs"][key] = {
                     "variant": variant, "levels": levels, "pct": pct, "nll": nll, "ppl": ppl,
