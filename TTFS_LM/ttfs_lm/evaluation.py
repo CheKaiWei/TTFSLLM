@@ -45,6 +45,7 @@ def evaluate_model_pair(
     batch_size: int,
     device: str | torch.device,
     progress: Callable[[int, int], None] | None = None,
+    compute_kl: bool = True,
 ) -> dict[str, Any]:
     reference_nll = 0.0
     candidate_nll = 0.0
@@ -85,11 +86,12 @@ def evaluate_model_pair(
         )
         comparison_tokens += reference_valid.shape[0]
 
-        reference_log_probs = F.log_softmax(reference_valid, dim=-1)
-        candidate_log_probs = F.log_softmax(candidate_valid, dim=-1)
-        kl_sum += float(
-            F.kl_div(candidate_log_probs, reference_log_probs, log_target=True, reduction="sum").item()
-        )
+        if compute_kl:
+            reference_log_probs = F.log_softmax(reference_valid, dim=-1)
+            candidate_log_probs = F.log_softmax(candidate_valid, dim=-1)
+            kl_sum += float(
+                F.kl_div(candidate_log_probs, reference_log_probs, log_target=True, reduction="sum").item()
+            )
         if progress is not None:
             progress(batch_index, batches)
 
@@ -102,7 +104,7 @@ def evaluate_model_pair(
             "max_abs": max_absolute_error,
             "mean_abs": absolute_error_sum / comparison_elements,
             "top1_agreement": top1_matches / comparison_tokens,
-            "mean_kl": kl_sum / comparison_tokens,
+            "mean_kl": kl_sum / comparison_tokens if compute_kl else None,
             "comparison_tokens": comparison_tokens,
         },
     }
