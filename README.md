@@ -105,6 +105,15 @@ ttfs-lm gpqa-diamond \
 产物落在 `TTFS_LM/artifacts/`（已 gitignore）：`ranges.json`、`metrics.json`、`run_manifest.json`、`run.log`。
 每个 pipeline 都有显式 acceptance gate，失败时非零退出，不静默放宽区间。
 
+当前机器上保留的四组产物（本文所有数字的 provenance，不入库）：
+
+| 目录 | 内容 |
+|---|---|
+| `artifacts/mvp_wikitext2/` | 0.5B WikiText-2 MVP：校准 ranges、PPL、logits 对齐、cache 检查 |
+| `artifacts/dataset_sweep/` | 0.5B 跨语料 sweep（WikiText-103 / PTB / LAMBADA / C4） |
+| `artifacts/dataset_sweep_qwen1.5b/` | 1.5B sweep 首轮 |
+| `artifacts/dataset_sweep_qwen1.5b_rerun_20260914/` | 1.5B sweep 重跑（数值尚未通过 provenance 验收） |
+
 细节（契约、逐模块转换、accepted tolerance、数据集 provenance）见 [`TTFS_LM/README.md`](TTFS_LM/README.md)、
 [`TTFS_LM/DATASETS.md`](TTFS_LM/DATASETS.md)、[`TTFS_LM/DATASET_SWEEP.md`](TTFS_LM/DATASET_SWEEP.md)。
 
